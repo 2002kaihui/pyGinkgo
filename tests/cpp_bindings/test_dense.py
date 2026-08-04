@@ -57,6 +57,22 @@ class TestDense:
         dense_b = dense_cls(self.ref, dense_a)
         verify_dense_vec(dense_b, self.values)
 
+    def test_can_clone_dense(self, data_type: pg.gko_types.ValueType):
+        dense_cls = getattr(pGB.matrix, "dense_" + data_type)
+        original = dense_cls(
+            np.array(self.values, dtype=data_type.numpy_type)
+        )
+
+        cloned = original.clone()
+
+        assert cloned.shape == original.shape
+        verify_dense_vec(cloned, self.values)
+
+        cloned.fill(0.0)
+
+        verify_dense_vec(cloned, np.zeros(len(self.values)))
+        verify_dense_vec(original, self.values)
+
     def test_can_create_dense_from_1D_np_array(self, data_type: pg.gko_types.ValueType):
         dense_cls = getattr(pGB.matrix, "dense_" + data_type)
         dense = dense_cls(self.ref, np.array(self.values, dtype=data_type.numpy_type))

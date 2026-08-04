@@ -5,11 +5,14 @@
 #include "python.hpp"
 #include "utils.hpp"
 
+#include <ginkgo/core/base/utils_helper.hpp>
+
 template <typename ValueType>
 void init_dense(py::module_ &module_matrix, const std::string typestr)
 {
     std::string pyclass_name = std::string("dense_") + typestr;
 
+    using dense_type = gko::matrix::Dense<ValueType>;
     using dim_type = gko::dim<2>::dimension_type;
     /* function to create a dense matrix from py::buffer object
      *
@@ -37,8 +40,7 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
     };
 
     auto cls =
-        py::class_<gko::matrix::Dense<ValueType>,
-                   std::shared_ptr<gko::matrix::Dense<ValueType>>, gko::LinOp>(
+        py::class_<dense_type, std::shared_ptr<dense_type>, gko::LinOp>(
             module_matrix, pyclass_name.c_str(), py::buffer_protocol())
             .def(py::init([init_func](py::buffer b) {
                 auto ref = gko::ReferenceExecutor::create();
@@ -343,8 +345,25 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
             "Returns the dimension of the dense matrix.")
         .def("get_num_stored_elements",
              &gko::matrix::Dense<ValueType>::get_num_stored_elements,
-             "Returns the number of elements explicitly stored in the "
-             "matrix.");
+             "Returns the number of elements explicitly stored in the matrix.")
+        .def(
+            "clone",
+            [](const dense_type& self) {
+                return gko::share(gko::clone(&self));
+            },
+            "Create an independent deep copy on the same executor.")
+        .def(
+            "clone",
+            [](const dense_type& self,
+            std::shared_ptr<const gko::Executor> exec) {
+                if (!exec) {
+                    throw py::value_error("executor must not be None");
+                }
+
+                return gko::share(gko::clone(std::move(exec), &self));
+            },
+            py::arg("executor"),
+            "Create an independent deep copy on the requested executor.");
 
 #ifdef GINKGO_BUILD_CUDA
     // __cuda_array_interface__ (v3) for zero-copy interop with CuPy and
