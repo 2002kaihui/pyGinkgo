@@ -204,7 +204,6 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
         .def("copy_to_host",
              [](gko::matrix::Dense<ValueType> &m) {
                  auto host_exec = m.get_executor()->get_master();
-                 std::cout << __FILE__ << "Warning creating a copy of dense\n";
                  if (m.get_executor() != host_exec) {
                      auto host_dense = gko::share(
                          gko::matrix::Dense<ValueType>::create(host_exec));
@@ -220,6 +219,17 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
                 return gko::share(m.transpose());
             },
             "Computes and returns transpose of the matrix")
+        .def(
+            "transpose_into",
+            [](const dense_type &self, std::shared_ptr<dense_type> output) {
+                if (!output) {
+                    throw py::value_error("output must not be None");
+                }
+                self.transpose(output);
+            },
+            py::arg("output"),
+            "Writes the transpose into an existing dense matrix. The output "
+            "must have shape (self.shape[1], self.shape[0]).")
         .def(
             "convert_to_csr",
             [](gko::matrix::Dense<ValueType> &m) {
@@ -277,6 +287,34 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
                std::shared_ptr<const gko::LinOp> b,
                std::shared_ptr<gko::LinOp> x) { d.apply(b, x); },
             "")
+        .def(
+            "apply",
+            [](const dense_type &self,
+               std::shared_ptr<const gko::LinOp> alpha,
+               std::shared_ptr<const gko::LinOp> b,
+               std::shared_ptr<const gko::LinOp> beta,
+               std::shared_ptr<gko::LinOp> x) {
+                self.apply(alpha, b, beta, x);
+            },
+            py::arg("alpha"), py::arg("b"), py::arg("beta"), py::arg("x"),
+            "Computes x = alpha * (self @ b) + beta * x. Alpha and beta "
+            "must be 1-by-1 linear operators.")
+        .def(
+            "apply",
+            [](const dense_type &self, ValueType alpha,
+               std::shared_ptr<const gko::LinOp> b, ValueType beta,
+               std::shared_ptr<gko::LinOp> x) {
+                auto alpha_op = dense_type::create(
+                    self.get_executor(), gko::dim<2>{1, 1});
+                auto beta_op = dense_type::create(
+                    self.get_executor(), gko::dim<2>{1, 1});
+                alpha_op->fill(alpha);
+                beta_op->fill(beta);
+                self.apply(alpha_op.get(), b, beta_op.get(), x);
+            },
+            py::arg("alpha"), py::arg("b"), py::arg("beta"), py::arg("x"),
+            "Computes x = alpha * (self @ b) + beta * x using Python "
+            "scalars for alpha and beta.")
         .def("scale",
              [](gko::matrix::Dense<ValueType> &m, ValueType s) {
                  auto o = gko::matrix::Dense<ValueType>::create(
@@ -284,6 +322,14 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
                  o->fill(s);
                  m.scale(o);
              })
+        .def(
+            "scale",
+            [](dense_type &self, std::shared_ptr<const gko::LinOp> alpha) {
+                self.scale(alpha);
+            },
+            py::arg("alpha"),
+            "Scales the matrix by a 1-by-1 scalar or scales each column by "
+            "a 1-by-n row vector.")
         .def("inv_scale",
              [](gko::matrix::Dense<ValueType> &m, ValueType s) {
                  auto o = gko::matrix::Dense<ValueType>::create(
@@ -292,6 +338,14 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
                  m.inv_scale(o);
              })
         .def(
+            "inv_scale",
+            [](dense_type &self, std::shared_ptr<const gko::LinOp> alpha) {
+                self.inv_scale(alpha);
+            },
+            py::arg("alpha"),
+            "Inverse-scales the matrix by a 1-by-1 scalar or each column by "
+            "a 1-by-n row vector.")
+        .def(
             "add_scaled",
             [](gko::matrix::Dense<ValueType> &self,
                std::shared_ptr<gko::LinOp> alpha,
@@ -299,12 +353,34 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
             py::arg("alpha"), py::arg("b"),
             "Adds `b` scaled by `alpha` to the matrix (aka: BLAS axpy).")
         .def(
+            "add_scaled",
+            [](dense_type &self, ValueType alpha,
+               std::shared_ptr<const gko::LinOp> b) {
+                auto alpha_op = dense_type::create(
+                    self.get_executor(), gko::dim<2>{1, 1});
+                alpha_op->fill(alpha);
+                self.add_scaled(alpha_op.get(), b);
+            },
+            py::arg("alpha"), py::arg("b"),
+            "Adds alpha * b using a Python scalar alpha.")
+        .def(
             "sub_scaled",
             [](gko::matrix::Dense<ValueType> &self,
                std::shared_ptr<gko::LinOp> alpha,
                std::shared_ptr<gko::LinOp> b) { self.sub_scaled(alpha, b); },
             py::arg("alpha"), py::arg("b"),
             "Subtracts `b` scaled by `alpha` from the matrix (aka: BLAS axpy).")
+        .def(
+            "sub_scaled",
+            [](dense_type &self, ValueType alpha,
+               std::shared_ptr<const gko::LinOp> b) {
+                auto alpha_op = dense_type::create(
+                    self.get_executor(), gko::dim<2>{1, 1});
+                alpha_op->fill(alpha);
+                self.sub_scaled(alpha_op.get(), b);
+            },
+            py::arg("alpha"), py::arg("b"),
+            "Subtracts alpha * b using a Python scalar alpha.")
         .def("at",
              py::overload_cast<size_t>(&gko::matrix::Dense<ValueType>::at,
                                        py::const_),
@@ -363,7 +439,51 @@ void init_dense(py::module_ &module_matrix, const std::string typestr)
                 return gko::share(gko::clone(std::move(exec), &self));
             },
             py::arg("executor"),
-            "Create an independent deep copy on the requested executor.");
+            "Create an independent deep copy on the requested executor.")
+        .def(
+            "copy_from",
+            [](gko::matrix::Dense<ValueType>& self,
+            const gko::matrix::Dense<ValueType>& other)
+                -> gko::matrix::Dense<ValueType>& {
+                self = other;
+                return self;
+            },
+            py::arg("other"),
+            py::return_value_policy::reference_internal,
+            "Copies another dense matrix into this matrix while preserving "
+            "the destination executor."
+        )
+        .def(
+            "create_with_config_of",
+            [](const dense_type &self) {
+                return gko::share(dense_type::create_with_config_of(&self));
+            },
+            "Allocates an uninitialized dense matrix with the same executor, "
+            "shape, value type and stride as this matrix.")
+        .def(
+            "create_with_type_of",
+            [](const dense_type &self, py::tuple shape) {
+                if (py::len(shape) != 2) {
+                    throw py::value_error("shape must contain exactly 2 values");
+                }
+                const auto rows = shape[0].cast<dim_type>();
+                const auto cols = shape[1].cast<dim_type>();
+                return gko::share(dense_type::create_with_type_of(
+                    &self, self.get_executor(), gko::dim<2>{rows, cols}));
+            },
+            py::arg("shape"),
+            "Allocates an uninitialized dense matrix with this matrix's "
+            "executor and value type, but with a requested shape.")
+        .def(
+            "compute_norm2",
+            [](const gko::matrix::Dense<ValueType>& self,
+            std::shared_ptr<gko::matrix::Dense<ValueType>> result) {
+                self.compute_norm2(result);
+            },
+            py::arg("result"),
+            "Computes one Euclidean norm per column. "
+            "The result must have shape (1, number_of_columns)."
+        );
 
 #ifdef GINKGO_BUILD_CUDA
     // __cuda_array_interface__ (v3) for zero-copy interop with CuPy and

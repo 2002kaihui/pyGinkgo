@@ -73,6 +73,22 @@ class TestDense:
         verify_dense_vec(cloned, np.zeros(len(self.values)))
         verify_dense_vec(original, self.values)
 
+    def test_can_copy_from_dense(self, data_type: pg.gko_types.ValueType):
+        dense_cls = getattr(pGB.matrix, "dense_" + data_type)
+        source = dense_cls(
+            self.ref, np.array(self.values, dtype=data_type.numpy_type)
+        )
+        destination = dense_cls(self.ref)
+
+        returned = destination.copy_from(source)
+
+        assert returned is destination
+        assert destination.shape == source.shape
+        verify_dense_vec(destination, self.values)
+
+        source.fill(0.0)
+        verify_dense_vec(destination, self.values)
+
     def test_can_create_dense_from_1D_np_array(self, data_type: pg.gko_types.ValueType):
         dense_cls = getattr(pGB.matrix, "dense_" + data_type)
         dense = dense_cls(self.ref, np.array(self.values, dtype=data_type.numpy_type))
@@ -180,6 +196,21 @@ class TestDense:
         dense_a.at(0, 0) == dense_aT.at(0, 0)
         dense_a.at(1, 1) == dense_aT.at(1, 1)
         dense_a.at(2, 2) == dense_aT.at(2, 2)
+
+    def test_compute_norm2(self, data_type: pg.gko_types.ValueType):
+        dense_cls = getattr(pGB.matrix, "dense_" + data_type)
+        values = np.array([[3.0, 0.0], [4.0, 12.0]], dtype=data_type.numpy_type)
+        dense = dense_cls(self.ref, values)
+        result = dense_cls(self.ref, (1, values.shape[1]))
+
+        dense.compute_norm2(result)
+
+        assert result.at(0, 0) == pytest.approx(
+            5.0, abs=d_precision_map[data_type]
+        )
+        assert result.at(0, 1) == pytest.approx(
+            12.0, abs=d_precision_map[data_type]
+        )
 
     def test_add_scaled(self, data_type: pg.gko_types.ValueType):
         dense_cls = getattr(pGB.matrix, "dense_" + data_type)
