@@ -9,7 +9,6 @@
 PyGinkgo is a Python binding for the Ginkgo framework, providing access to Ginkgo's powerful linear algebra capabilities from Python. Ginkgo is a high-performance numerical linear algebra library for sparse systems, primarily designed for developing efficient iterative solvers on complex HPC architectures.
 
 The tests successfully run on the following Python versions:
-- 3.8.20
 - 3.9.22
 - 3.10.17
 - 3.11.12
@@ -18,9 +17,151 @@ The tests successfully run on the following Python versions:
 
 ## Installation
 
+### Installing via pip (recommended)
+
+Pre-built wheels are the quickest way to get pyGinkgo. They bundle Ginkgo, so no
+separate Ginkgo installation or compilation is required.
+
+Three flavours are published, and they are obtained differently: **CPU wheels
+come from PyPI**, while the **CUDA and ROCm wheels are attached to GitHub
+Releases**.
+
+#### CPU wheels (from PyPI)
+
+```bash
+pip install pyGinkgo
+```
+
+Available for CPython 3.9–3.13 on:
+
+| Platform | Architectures | Notes |
+| --- | --- | --- |
+| Linux | x86-64, aarch64 | manylinux, glibc >= 2.28 |
+| Windows | AMD64 | |
+| macOS | arm64 (Apple Silicon), x86-64 (Intel) | |
+
+Alpine/musl and 32-bit targets are not built. These wheels enable Ginkgo's
+**reference backend only** — no OpenMP, MPI, CUDA, HIP or SYCL. If you need a
+multi-threaded CPU backend (`OmpExecutor`), SYCL, or MPI support,
+build from source as described below.
+
+#### CUDA wheels (from GitHub Releases)
+
+CUDA wheels are *not* published to PyPI: they carry a local version suffix such
+as `+cuda128`, and PyPI rejects local version identifiers. They are attached to
+the matching [GitHub Release](https://github.com/Helmholtz-AI-Energy/pyGinkgo/releases)
+instead, and are installed directly by URL:
+
+Two variants are built, one per CUDA major version. Pick the one matching your
+CUDA installation — minor-version compatibility spans a major line but not
+across one, so a 12.x wheel will not run against CUDA 13 or the reverse:
+
+| Variant | Suffix | Works with | NVIDIA driver |
+| --- | --- | --- | --- |
+| CUDA 12.8 | `+cuda128` | any CUDA 12.x | R525+ |
+| CUDA 13.1 | `+cuda131` | any CUDA 13.x | R580+ |
+
+```bash
+# CUDA 12.8, CPython 3.12, Linux x86-64
+pip install https://github.com/Helmholtz-AI-Energy/pyGinkgo/releases/download/v0.0.1/pyGinkgo-0.0.1+cuda128-cp312-cp312-manylinux_2_34_x86_64.whl
+
+# CUDA 13.1, same platform
+pip install https://github.com/Helmholtz-AI-Energy/pyGinkgo/releases/download/v0.0.1/pyGinkgo-0.0.1+cuda131-cp312-cp312-manylinux_2_34_x86_64.whl
+```
+
+Both variants are otherwise identical, and narrower than the CPU wheels:
+
+| Requirement | Value |
+| --- | --- |
+| OS | Linux x86-64, glibc >= 2.34 (Ubuntu 22.04+, RHEL/Rocky 9+, Debian 12+) |
+| Python | CPython 3.12 only |
+| GPU | compute capability 8.0 (Ampere, e.g. A100/A30) and 9.0 (Hopper, e.g. H100) |
+| CUDA math libraries | **required on the host**, matching the variant's major version |
+
+The CUDA math libraries are *not* bundled: Ginkgo links cuBLAS, cuSPARSE, cuRAND
+and cuFFT, and shipping them produced a 2 GB wheel. The wheel links against the
+host's CUDA installation instead, so a matching toolkit must be installed and on
+the loader path — on HPC systems this usually means loading the matching module
+before importing pyGinkgo:
+
+```bash
+module load cuda/12          # or: export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+```
+
+`libcuda.so.1` is excluded too, since it is provided by the installed NVIDIA
+driver, while `libcudart` *is* bundled so the CUDA runtime stays matched to the
+build. The wheel also embeds PTX, so newer GPU architectures should work through
+JIT compilation, but this is not tested.
+
+#### ROCm wheels (from GitHub Releases)
+
+ROCm wheels are published alongside the CUDA ones. As with CUDA, there is one
+variant per major version — the ROCm libraries are not bundled, so the wheel
+links against the host's sonames and those carry the major version. A ROCm 6
+wheel will not load against a ROCm 7 installation:
+
+| Variant | Suffix | Works with |
+| --- | --- | --- |
+| ROCm 6.4 | `+rocm64` | any ROCm 6.x |
+| ROCm 7.0 | `+rocm70` | any ROCm 7.x |
+
+```bash
+# ROCm 6.4, CPython 3.12, Linux x86-64, AMD CDNA2 (gfx90a)
+pip install https://github.com/Helmholtz-AI-Energy/pyGinkgo/releases/download/v0.0.1/pyGinkgo-0.0.1+rocm64-cp312-cp312-manylinux_2_34_x86_64.whl
+
+# ROCm 7.0, same platform
+pip install https://github.com/Helmholtz-AI-Energy/pyGinkgo/releases/download/v0.0.1/pyGinkgo-0.0.1+rocm70-cp312-cp312-manylinux_2_34_x86_64.whl
+```
+
+Both variants are otherwise identical:
+
+| Requirement | Value |
+| --- | --- |
+| OS | Linux x86-64, glibc >= 2.34 (Ubuntu 22.04+, RHEL/Rocky 9+, Debian 12+) |
+| Python | CPython 3.12 only |
+| GPU | gfx90a (CDNA2, e.g. MI210/MI250X) |
+| ROCm runtime | **required on the host**, matching the variant's major version |
+
+Note the difference from the CUDA wheels: *all* the ROCm userspace libraries are
+excluded, not just the math ones, because rocBLAS alone ships hundreds of
+megabytes of Tensile kernels. The wheel links against the host's ROCm
+installation, so a matching ROCm must be installed and on the loader path — on
+HPC systems this usually means loading the matching module before importing
+pyGinkgo:
+
+```bash
+module load rocm/6.4          # or: export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+```
+
+Because all three flavours share the distribution name `pyGinkgo`, installing a
+GPU wheel over an existing CPU install replaces it; pass `--force-reinstall` if
+pip reports the requirement as already satisfied.
+
+#### Verifying an installation
+
+```bash
+python -c "import pyGinkgo.pyGinkgoBindings as pGB; pGB.ReferenceExecutor().synchronize(); print('pyGinkgo OK')"
+```
+
+After installing a CUDA wheel, also check that the GPU backend is present and a
+device is visible:
+
+```bash
+python -c "import pyGinkgo; print('CUDA available:', pyGinkgo.cuda_available()); pyGinkgo.device('cuda:0').synchronize(); print('CUDA OK')"
+```
+
+The equivalent check for a ROCm wheel:
+
+```bash
+python -c "import pyGinkgo, pyGinkgo.pyGinkgoBindings as pGB; print('HIP devices:', pGB.HipExecutor.get_num_devices()); pyGinkgo.device('hip:0').synchronize(); print('ROCm OK')"
+```
+
+To build from source instead (e.g. to enable a compute backend not covered by
+the wheels), follow the sections below.
+
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.9+
 - Ginkgo (preinstalled, otherwise it will be cloned during build)
 - Pybind11
 - Ninja # if you want to use cmake presets
@@ -42,7 +183,7 @@ The tests successfully run on the following Python versions:
    cmake ..
 
    # Build the project using the specified number of cores (replace "number of cores" with the desired value)
-include/FoamAdapter/datastructures/expression.hpp   # (Here we are still within the build directory)
+   # (Here we are still within the build directory)
    cmake --build . -j=number_of_cores
    ```
 3. **Install the module**:
@@ -115,7 +256,15 @@ This will generate the stubs for the C++ code in the `pyGinkgoBindings` module i
 
 ## Usage
 
-Usage examples can be found in [examples](examples) directory. Here's a simple example demonstrating how to use pyGinkgo to perform sparse matrix-vector multiplication:
+Usage examples can be found in [examples](examples) directory. Here's a simple example demonstrating how to use pyGinkgo to perform sparse matrix-vector multiplication.
+
+It reads a matrix in [Matrix Market](https://math.nist.gov/MatrixMarket/formats.html)
+format. The example below uses `m1.mtx` from this repository — if you installed
+pyGinkgo from PyPI you will not have it locally, so fetch it first:
+
+```bash
+curl -LO https://raw.githubusercontent.com/Helmholtz-AI-Energy/pyGinkgo/main/examples/m1.mtx
+```
 
 ```python
 import pyGinkgo as pg
@@ -124,7 +273,8 @@ import numpy as np
 # Device initialization
 dev = pg.device("cuda")
 
-# Initialize matrix and tensors
+# Initialize matrix and tensors. The path is relative to the working
+# directory, so run this from wherever m1.mtx actually is.
 fn = 'm1.mtx'
 
 A = pg.read(device=dev, path=fn, dtype="double", format="Csr")
